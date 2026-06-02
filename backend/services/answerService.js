@@ -1,3 +1,4 @@
+import mongoose from 'mongoose';
 import Answer from '../models/Answer.js';
 import Question from '../models/Question.js';
 import Vote from '../models/Vote.js';
@@ -97,6 +98,7 @@ class AnswerService {
   /**
    * Vote on a community answer.
    * Automatically handles auto-hiding (score <= -3) and corpus promotion (score >= 5).
+   * Uses MongoDB transaction to ensure atomic vote creation and score update.
    *
    * @param {Object} data - Voting inputs
    * @param {string} data.id - Answer database ID
@@ -119,46 +121,57 @@ class AnswerService {
       throw new AppError('You cannot vote on your own answer.', 403);
     }
 
+    const session = await mongoose.startSession();
+    session.startTransaction();
+
     try {
-      await Vote.create({
+      // Create vote within transaction
+      await Vote.create([{
         user_id: userId,
         answer_id: answer._id,
         type,
-      });
-    } catch (dupError) {
-      if (dupError.code === 11000) {
+      }], { session });
+
+      const update = type === 'up'
+        ? { $inc: { upvotes: 1, net_score: 1 } }
+        : { $inc: { downvotes: 1, net_score: -1 } };
+
+      const updatedAnswer = await Answer.findByIdAndUpdate(
+        answer._id,
+        update,
+        { new: true, session }
+      );
+
+      await session.commitTransaction();
+
+      // Auto-hide answer at net score <= -3 (outside transaction - not critical)
+      if (updatedAnswer.net_score <= -3 && updatedAnswer.status !== 'hidden') {
+        await Answer.findByIdAndUpdate(answer._id, { status: 'hidden' });
+      }
+
+      // Automatically trigger Phase 5: promote to FAQ corpus at score >= 5 (async, non-critical)
+      if (updatedAnswer.net_score >= 5 && updatedAnswer.ai_check_passed && !updatedAnswer.promoted_to_corpus) {
+        promoteToCorpus(updatedAnswer).catch(err =>
+          logger.warn('AnswerService', `Corpus auto-promotion failed: ${err.message}`)
+        );
+      }
+
+      return {
+        success: true,
+        net_score: updatedAnswer.net_score,
+        message: type === 'up' ? 'Upvoted!' : 'Downvoted.',
+      };
+    } catch (error) {
+      await session.abortTransaction();
+
+      // Handle duplicate vote error
+      if (error.code === 11000) {
         throw new AppError('You have already voted on this answer.', 409);
       }
-      throw dupError;
+      throw error;
+    } finally {
+      session.endSession();
     }
-
-    const update = type === 'up'
-      ? { $inc: { upvotes: 1, net_score: 1 } }
-      : { $inc: { downvotes: 1, net_score: -1 } };
-
-    const updatedAnswer = await Answer.findByIdAndUpdate(
-      answer._id,
-      update,
-      { new: true }
-    );
-
-    // Auto-hide answer at net score <= -3
-    if (updatedAnswer.net_score <= -3 && updatedAnswer.status !== 'hidden') {
-      await Answer.findByIdAndUpdate(answer._id, { status: 'hidden' });
-    }
-
-    // Automatically trigger Phase 5: promote to FAQ corpus at score >= 5
-    if (updatedAnswer.net_score >= 5 && updatedAnswer.ai_check_passed && !updatedAnswer.promoted_to_corpus) {
-      promoteToCorpus(updatedAnswer).catch(err =>
-        logger.warn('AnswerService', `Corpus auto-promotion failed: ${err.message}`)
-      );
-    }
-
-    return {
-      success: true,
-      net_score: updatedAnswer.net_score,
-      message: type === 'up' ? 'Upvoted!' : 'Downvoted.',
-    };
   }
 }
 

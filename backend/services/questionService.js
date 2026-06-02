@@ -1,3 +1,4 @@
+import mongoose from 'mongoose';
 import Question from '../models/Question.js';
 import Answer from '../models/Answer.js';
 import Vote from '../models/Vote.js';
@@ -326,6 +327,7 @@ class QuestionService {
 
   /**
    * Vote on a community question.
+   * Uses MongoDB transaction to ensure atomic vote creation and score update.
    *
    * @param {Object} data - Voting details
    * @param {string} data.id - Question database ID
@@ -348,34 +350,45 @@ class QuestionService {
       throw new AppError('You cannot vote on your own question.', 403);
     }
 
+    const session = await mongoose.startSession();
+    session.startTransaction();
+
     try {
-      await Vote.create({
+      // Create vote within transaction
+      await Vote.create([{
         user_id: userId,
         question_id: question._id,
         type,
-      });
-    } catch (dupError) {
-      if (dupError.code === 11000) {
+      }], { session });
+
+      const update = type === 'up'
+        ? { $inc: { upvotes: 1, net_score: 1 } }
+        : { $inc: { downvotes: 1, net_score: -1 } };
+
+      const updatedQuestion = await Question.findByIdAndUpdate(
+        question._id,
+        update,
+        { new: true, session }
+      );
+
+      await session.commitTransaction();
+
+      return {
+        success: true,
+        net_score: updatedQuestion.net_score,
+        message: 'Vote recorded',
+      };
+    } catch (error) {
+      await session.abortTransaction();
+
+      // Handle duplicate vote error
+      if (error.code === 11000) {
         throw new AppError('You have already voted on this question.', 409);
       }
-      throw dupError;
+      throw error;
+    } finally {
+      session.endSession();
     }
-
-    const update = type === 'up'
-      ? { $inc: { upvotes: 1, net_score: 1 } }
-      : { $inc: { downvotes: 1, net_score: -1 } };
-
-    const updatedQuestion = await Question.findByIdAndUpdate(
-      question._id,
-      update,
-      { new: true }
-    );
-
-    return {
-      success: true,
-      net_score: updatedQuestion.net_score,
-      message: 'Vote recorded',
-    };
   }
 
   /**
