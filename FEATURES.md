@@ -6,6 +6,21 @@
 
 ---
 
+## What is Samagama?
+
+Samagama is an AI-powered FAQ and community support platform built for the Vicharanashala Summer Internship program at IIT Ropar[cite: 1]. It replaces static FAQ PDFs and scattered WhatsApp queries with a single, intelligent hub where participants get instant answers — and contribute their own knowledge back to the community[cite: 1].
+
+The platform has three components working together[cite: 1]:
+
+| Component | Who uses it | What it does |
+| :--- | :--- | :--- |
+| **Client App** (`/client`) | All participants | Ask Yaksha AI, browse FAQs, post community questions, vote, earn SP[cite: 1] |
+| **Admin Panel** (`/admin`) | Program coordinators | Moderate content, approve answers, manage the FAQ corpus, view analytics[cite: 1] |
+| **Backend API** (`/backend`) | Both apps | Handles all AI, search, auth, and database logic[cite: 1] |
+
+
+---
+
 ## Table of Contents
 
 1. [AI / Yaksha Intelligence Engine](#1--ai--yaksha-intelligence-engine)
@@ -299,7 +314,7 @@
   The admin dashboard aggregates 9 metrics in a single function call: `FAQ.countDocuments()`, `FAQCategory.countDocuments()`, `User.countDocuments()`, `Question.countDocuments({ status: { $in: ['open', 'answered'] } })`, `Answer.countDocuments({ status: 'flagged' })`, `Answer.countDocuments({ status: 'live', net_score: { $gte: 3 }, promoted_to_corpus: { $ne: true } })` (genuine FAQ proposal candidates), `Question.countDocuments` (spotlighted count), `SemanticCache.countDocuments()` (total AI queries), and the 10 most recent cache entries for a "recent queries" feed. All counts are computed at request time, not cached.
 
 - **Date-Filterable Time-Series Analytics (7d / 30d / 90d)**
-  `adminService.getAnalytics(period)` computes a merged time-series by building a `dateMap` with one entry per day in the selected period (initialised to zero), then filling it with results from two parallel MongoDB aggregation pipelines: `SemanticCache` grouping by `$dateToString` (query volume per day) and `Question` grouping by `$dateToString` (community questions posted per day). The merged array guarantees every day in the range appears in the chart data, even if no activity occurred, preventing gaps in the time-series visualisation.
+  `adminService.getAnalytics(period)` computes a merged time-series by building a `dateMap` with one entry per day in the selected period (initialised to zero), then filling it with results from two parallel MongoDB aggregation pipelines: `SemanticCache` grouping by `$dateToString` (query volume per day) and `Question` grouping by `$dateToString` (community questions posted per day). The merged array guarantees every day in the range appears in the chart data, even if no activity occurred, preventing gaps in the time-series visualisation. Shows time-based heatmaps on the frequency of query asked at a particular hour or date and it is named as Activity Heatmap. Tracks activity of the client and shows users retention insights.
 
 - **Groq Token Usage Audit with Daily Breakdown**
   `getAnalytics()` runs two Groq-specific aggregations: a total summary (`totalTokens`, `totalPromptTokens`, `totalCompletionTokens`, `totalCalls`) and a per-day breakdown (`tokens`, `calls`) for the selected period. Both are sourced from the `GroqLog` collection, which stores the exact token usage of every API call. `AdminAnalytics.jsx` renders the daily token series as a bar chart and displays the lifetime totals as KPI cards, giving admins precise cost visibility.
@@ -308,7 +323,7 @@
   `getAnalytics()` includes a `User.aggregate([{ $group: { _id: '$role', count: { $sum: 1 } } }])` pipeline that counts users by role (`asker`, `answerer`, `both`, `admin`). This is rendered as a pie or bar chart in `AdminAnalytics.jsx`, giving coordinators demographic insight into the platform's active user base composition — e.g., whether most users are askers or answerers.
 
 - **Answer and Question Status Breakdown Charts**
-  Two separate aggregation pipelines — `Answer.aggregate` and `Question.aggregate` grouped by `status` — produce counts for every status value. Answer statuses (`live`, `flagged`, `hidden`) and question statuses (`open`, `answered`, `review`, `hidden`, `closed`) are displayed as separate distribution charts in `AdminAnalytics.jsx`. These give moderation teams an overview of the pipeline health: e.g., a large `flagged` count indicates a backlog, while a large `review` count indicates the posting filter is being conservative.
+  Two separate aggregation pipelines — `Answer.aggregate` and `Question.aggregate` grouped by `status` — produce counts for every status value. Answer statuses (`live`, `flagged`, `hidden`) and question statuses (`open`, `answered`, `review`, `hidden`, `closed`) are displayed as separate distribution charts in `AdminAnalytics.jsx`. These give moderation teams an overview of the pipeline health: e.g., a large `flagged` count indicates a backlog, while a large `review` count indicates the posting filter is being conservative. Shows Avg. Response Time graphs containing the time from question to first answer.
 
 - **Promoted Answer Counter and Average Answer Score**
   `getAnalytics()` computes `promotedCount = Answer.countDocuments({ promoted_to_corpus: true })` and `avgAnswerScore = Answer.aggregate` with `$avg: '$net_score'` filtered to `status: 'live'`. These two metrics measure the platform's knowledge extraction effectiveness: the promoted count shows how much community knowledge has been formalised, and the average answer score provides a proxy for community content quality over time.
@@ -372,3 +387,4 @@
 ---
 
 *Derived from full source analysis of `GitHub/backend/` (controllers, models, services, routes, middleware, utils), `GitHub/client/src/` (pages, components, hooks, context, api, services), and `GitHub/admin/src/` (pages, components, services). Total codebase: ~120,000 characters across 50+ source files.*
+
